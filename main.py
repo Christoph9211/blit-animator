@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout
 from PyQt5.QtGui import QImage, QPixmap, QMovie
 from PyQt5.QtCore import Qt, QTimer
 import imageio.v2 as iio
+from PIL import Image
 
 class TransparentVisionOverlay(QWidget):
     def __init__(self, animation_frames, fps=10):
@@ -53,9 +54,28 @@ class TransparentVisionOverlay(QWidget):
     def closeEvent(self, event):
         event.accept()
 
+def is_black_frame(image_path):
+    with Image.open(image_path) as img:
+        img = img.convert("RGBA")
+        pixels = img.getdata()
+        for pixel in pixels:
+            r, g, b, a = pixel
+            # Check if pixel is not black or not fully transparent
+            if not ((r == 0 and g == 0 and b == 0) or a == 0):
+                return False
+        return True
+
+def remove_black_frames(folder):
+    for filename in os.listdir(folder):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            file_path = os.path.join(folder, filename)
+            if is_black_frame(file_path):
+                print(f"Removing black frame: {filename}")
+                os.remove(file_path)
+
 if __name__ == "__main__":
     # Load images from folder
-    image_folder = 'transparent_frames(40)'     # Path to your folder with images!
+    image_folder = 'transparent_frames(12)'     # Path to your folder with images!
     images = []
     for img_name in os.listdir(image_folder):
         if img_name.endswith('.png'):
@@ -77,6 +97,9 @@ if __name__ == "__main__":
         
     fps = 10
     
+    transparent_frames_folder = r"f:\Programming Folder\Python\blit animator\transparent_frames(8)"
+    # Remove black frames from the folder
+    remove_black_frames(transparent_frames_folder)
 
     app = QApplication(sys.argv)
     # window = TransparentVisionOverlay("animation.apng")

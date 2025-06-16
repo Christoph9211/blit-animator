@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!-- <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://code.jquery.com https://unpkg.com https://d3js.org https://threejs.org https://cdn.plot.ly https://stackpath.bootstrapcdn.com https://maps.googleapis.com https://cdn.tailwindcss.com https://ajax.googleapis.com https://kit.fontawesome.com https://cdn.datatables.net https://maxcdn.bootstrapcdn.com https://code.highcharts.com https://tako-static-assets-production.s3.amazonaws.com https://www.youtube.com https://fonts.googleapis.com https://fonts.gstatic.com https://pfst.cf2.poecdn.net https://puc.poecdn.net https://i.imgur.com https://wikimedia.org https://*.icons8.com https://*.giphy.com https://picsum.photos https://images.unsplash.com; frame-src 'self' https://www.youtube.com https://trytako.com; child-src 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests; block-all-mixed-content;"> -->
   <meta http-equiv="Content-Security-Policy">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video to Transparent GIF Converter</title>
@@ -11,7 +12,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0/dist/body-pix.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-
   <style>
     :root {
       --primary-color: #5D5CDE;
@@ -431,21 +431,21 @@
           </div>
         </div>
         
-        <!-- Quality Selection -->
+        <!-- Quality/Size Selection -->
         <div>
-          <p class="mb-2 font-medium">GIF Quality</p>
+          <p class="mb-2 font-medium">Output Size</p>
           <div class="radio-group">
             <div class="radio-option">
-              <input type="radio" name="quality" id="qualityLow" value="20">
-              <label for="qualityLow">Low Quality (Smaller File)</label>
+              <input type="radio" name="quality" id="qualityLow" value="0.5">
+              <label for="qualityLow">Small (50% Scale)</label>
             </div>
             <div class="radio-option">
-              <input type="radio" name="quality" id="qualityMed" value="10" checked>
-              <label for="qualityMed">Medium Quality (Balanced)</label>
+              <input type="radio" name="quality" id="qualityMed" value="0.75" checked="">
+              <label for="qualityMed">Medium (75% Scale)</label>
             </div>
             <div class="radio-option">
-              <input type="radio" name="quality" id="qualityHigh" value="5">
-              <label for="qualityHigh">High Quality (Larger File)</label>
+              <input type="radio" name="quality" id="qualityHigh" value="1.0">
+              <label for="qualityHigh">Large (100% Scale)</label>
             </div>
           </div>
         </div>
@@ -518,6 +518,67 @@
   </div>
 
   <script>
+    // Simple animation player (fallback if GIF creation fails)
+    class FrameAnimator {
+      constructor(frames, fps) {
+        this.frames = frames;
+        this.fps = fps || 10;
+        this.currentFrame = 0;
+        this.isPlaying = false;
+        this.canvas = document.createElement('canvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.interval = null;
+        this.onRender = null;
+      }
+      
+      async init() {
+        // Load the first frame to get dimensions
+        const img = new Image();
+        return new Promise((resolve, reject) => {
+          img.onload = () => {
+            this.canvas.width = img.width;
+            this.canvas.height = img.height;
+            resolve();
+          };
+          img.onerror = () => reject(new Error("Failed to load first frame"));
+          img.src = this.frames[0];
+        });
+      }
+      
+      play() {
+        if (this.isPlaying) return;
+        this.isPlaying = true;
+        
+        const frameTime = 1000 / this.fps;
+        
+        this.interval = setInterval(() => {
+          const img = new Image();
+          img.onload = () => {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.drawImage(img, 0, 0);
+            
+            if (this.onRender) {
+              this.onRender(this.canvas);
+            }
+          };
+          img.src = this.frames[this.currentFrame];
+          
+          this.currentFrame = (this.currentFrame + 1) % this.frames.length;
+        }, frameTime);
+      }
+      
+      pause() {
+        if (!this.isPlaying) return;
+        this.isPlaying = false;
+        clearInterval(this.interval);
+      }
+      
+      stop() {
+        this.pause();
+        this.currentFrame = 0;
+      }
+    }
+    
     document.addEventListener('DOMContentLoaded', () => {
       // DOM Elements
       const fileInput = document.getElementById('fileInput');
@@ -557,6 +618,9 @@
       let isModelLoaded = false;
       let extractedFrames = [];
       let transparentFrames = [];
+      let frameWidth = 0;
+      let frameHeight = 0;
+      let animator = null;
       let lastFramesZip = null; // Store last generated ZIP blob
       
       // Initialize BodyPix model
@@ -566,7 +630,7 @@
             architecture: 'ResNet50',
             outputStride: 16,
             multiplier: 1.0,
-            quantBytes: 2
+            quantBytes: 4
           });
           isModelLoaded = true;
           console.log('BodyPix model loaded successfully');
@@ -657,48 +721,7 @@
         endTimeInput.max = duration;
         startTimeInput.max = duration;
       }
-
-      // Remove small blobs from the mask using connected-component analysis
-      function cleanMask(mask, width, height) {
-        const visited = new Uint8Array(mask.length);
-        const MIN_REGION_SIZE = 50;
-        
-        function floodFill(x, y) {
-          const stack = [[x, y]];
-          let regionSize = 0;
-          while (stack.length) {
-            const [cx, cy] = stack.pop();
-            const idx = cy * width + cx;
-            if (cx < 0 || cx >= width || cy < 0 || cy >= height || visited[idx] || !mask[idx]) continue;
-            visited[idx] = 1;
-            regionSize++;
-            stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
-          }
-          return regionSize;
-        }
-        
-        const cleanedMask = new Uint8Array(mask.length);
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
-            const idx = y * width + x;
-            if (mask[idx] && !visited[idx]) {
-              const regionSize = floodFill(x, y);
-              if (regionSize < MIN_REGION_SIZE) {
-                floodFill(x, y); // Redo to mark as visited
-                for (let i = 0; i < mask.length; i++) {
-                  if (visited[i] === 1) cleanedMask[i] = 0;
-                }
-              } else {
-                for (let i = 0; i < mask.length; i++) {
-                  if (visited[i] === 1) cleanedMask[i] = mask[i];
-                }
-              }
-            }
-          }
-        }
-        return cleanedMask;
-      }
-
+      
       // Process the video
       async function processVideo() {
         if (!videoFile) {
@@ -719,12 +742,12 @@
         const startTime = parseFloat(startTimeInput.value) || 0;
         const endTime = parseFloat(endTimeInput.value) || videoPreview.duration;
         const fps = parseInt(document.querySelector('input[name="fps"]:checked').value);
-        const quality = parseInt(document.querySelector('input[name="quality"]:checked').value);
+        const scale = parseFloat(document.querySelector('input[name="quality"]:checked').value);
         
         try {
           // Step 1: Extract frames
           updateProgress(1, 0);
-          extractedFrames = await extractFramesFromVideo(videoURL, startTime, endTime, fps, quality);
+          extractedFrames = await extractFramesFromVideo(videoURL, startTime, endTime, fps, scale);
           updateProgress(1, 100);
           
           // Step 2: Segment person from each frame
@@ -774,58 +797,64 @@
       }
       
       // Extract frames from video
-      async function extractFramesFromVideo(videoUrl, startTime, endTime, fps, quality) {
+      async function extractFramesFromVideo(videoUrl, startTime, endTime, fps, scale = 1.0) {
         return new Promise((resolve, reject) => {
           const video = document.createElement('video');
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
           const frames = [];
-          const interval = 1 / fps;
-          const totalFrames = Math.floor((endTime - startTime) * fps);
+          
           let currentTime = startTime;
-          let frameCount = 0;
-
+          const interval = 1 / fps;
+          
           video.muted = true;
           video.crossOrigin = 'anonymous';
-
+          
           video.addEventListener('loadedmetadata', () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-
+            // Make sure we have valid integer dimensions with scaling
+            frameWidth = Math.floor(video.videoWidth * scale);
+            frameHeight = Math.floor(video.videoHeight * scale);
+            
+            // Set canvas dimensions - must be integers
+            canvas.width = frameWidth;
+            canvas.height = frameHeight;
+            
             // Ensure valid end time
             if (endTime > video.duration) {
               endTime = video.duration;
             }
-
-            video.addEventListener('seeked', captureFrame);
-
-            function captureFrame() {
+            
+            const totalFrames = Math.floor((endTime - startTime) * fps);
+            let frameCount = 0;
+            
+            video.addEventListener('seeked', () => {
+              // Draw the current frame with scaling
               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              // Save frame as PNG data URL
               frames.push(canvas.toDataURL('image/png'));
-
+              
               frameCount++;
               currentTime += interval;
-
+              
               // Update progress
               updateProgress(1, Math.round(frameCount / totalFrames * 100));
-
-              if (currentTime <= endTime && frameCount < totalFrames) {
+              
+              if (currentTime <= endTime) {
+                // Continue to the next frame
                 video.currentTime = currentTime;
               } else {
-                video.removeEventListener('seeked', captureFrame);
+                // Finished extracting frames
                 resolve(frames);
               }
-            }
-
+            });
+            
             // Start the process
             video.currentTime = startTime;
           });
-
+          
           video.addEventListener('error', (err) => {
             reject(new Error('Error loading video: ' + err.message));
           });
-
+          
           video.src = videoUrl;
           video.load();
         });
@@ -842,30 +871,38 @@
               canvas.height = img.height;
               const ctx = canvas.getContext('2d', { willReadFrequently: true });
               
+              // Draw the original image
               ctx.drawImage(img, 0, 0);
-
-              // Segment
+              
+              // Get the pixel data
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              
+              // Run segmentation
               const segmentation = await bodyPixNet.segmentPerson(canvas, {
                 flipHorizontal: false,
                 internalResolution: 'high',
                 segmentationThreshold: 0.7
               });
               
-              // Post-process mask
-              const cleanedMask = cleanMask(segmentation.data, canvas.width, canvas.height);
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              // Create transparent background
+              const mask = segmentation.data;
               const data = imageData.data;
               
-              for (let i = 0; i < cleanedMask.length; i++) {
-                if (!cleanedMask[i]) {
-                  data[i * 4 + 3] = 0;
+              for (let i = 0; i < mask.length; i++) {
+                const j = i * 4;
+                if (!mask[i]) {
+                  // Set transparent pixels
+                  data[j + 3] = 0;
                 }
               }
               
+              // Update canvas with the transparent image
               ctx.clearRect(0, 0, canvas.width, canvas.height);
               ctx.putImageData(imageData, 0, 0);
+              
               resolve(canvas.toDataURL('image/png'));
             };
+            
             img.onerror = () => reject(new Error('Failed to load frame'));
             img.src = frameDataUrl;
           } catch (err) {
@@ -902,7 +939,7 @@
           alert('Failed to create ZIP file for frames.');
         }
       }
-
+      
       // Update progress UI
       function updateProgress(step, percent) {
         // Update progress bar
@@ -936,6 +973,12 @@
       
       // Reset the app
       function resetApp() {
+        // Stop animations if running
+        if (animator) {
+          animator.stop();
+          animator = null;
+        }
+        
         // Clear file input
         fileInput.value = '';
         
@@ -978,6 +1021,8 @@
         // Reset arrays
         extractedFrames = [];
         transparentFrames = [];
+        frameWidth = 0;
+        frameHeight = 0;
         
         // Reset status text
         step1Status.classList.remove('hidden');
@@ -989,5 +1034,7 @@
       }
     });
   </script>
+
+
 </body>
 </html>
