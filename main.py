@@ -75,7 +75,7 @@ def remove_black_frames(folder):
 
 if __name__ == "__main__":
     # Load images from folder
-    image_folder = 'transparent_frames(12)'     # Path to your folder with images!
+    image_folder = 'transparent_frames'    # Path to your folder with images!
     images = []
     for img_name in os.listdir(image_folder):
         if img_name.endswith('.png'):
@@ -97,9 +97,9 @@ if __name__ == "__main__":
         
     fps = 10
     
-    transparent_frames_folder = r"f:\Programming Folder\Python\blit animator\transparent_frames(8)"
-    # Remove black frames from the folder
-    remove_black_frames(transparent_frames_folder)
+    # transparent_frames_folder = r"f:\Programming Folder\Python\blit animator\transparent_frames(8)"
+    # # Remove black frames from the folder
+    remove_black_frames(image_folder)
 
     app = QApplication(sys.argv)
     # window = TransparentVisionOverlay("animation.apng")
