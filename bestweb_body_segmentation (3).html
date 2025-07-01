@@ -721,7 +721,48 @@
         endTimeInput.max = duration;
         startTimeInput.max = duration;
       }
-      
+
+      // Remove small blobs from the mask using connected-component analysis
+      function cleanMask(mask, width, height) {
+        const visited = new Uint8Array(mask.length);
+        const MIN_REGION_SIZE = 50;
+        
+        function floodFill(x, y) {
+          const stack = [[x, y]];
+          let regionSize = 0;
+          while (stack.length) {
+            const [cx, cy] = stack.pop();
+            const idx = cy * width + cx;
+            if (cx < 0 || cx >= width || cy < 0 || cy >= height || visited[idx] || !mask[idx]) continue;
+            visited[idx] = 1;
+            regionSize++;
+            stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+          }
+          return regionSize;
+        }
+        
+        const cleanedMask = new Uint8Array(mask.length);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            if (mask[idx] && !visited[idx]) {
+              const regionSize = floodFill(x, y);
+              if (regionSize < MIN_REGION_SIZE) {
+                floodFill(x, y); // Redo to mark as visited
+                for (let i = 0; i < mask.length; i++) {
+                  if (visited[i] === 1) cleanedMask[i] = 0;
+                }
+              } else {
+                for (let i = 0; i < mask.length; i++) {
+                  if (visited[i] === 1) cleanedMask[i] = mask[i];
+                }
+              }
+            }
+          }
+        }
+        return cleanedMask;
+      }
+
       // Process the video
       async function processVideo() {
         if (!videoFile) {
@@ -862,17 +903,17 @@
       
       // Create transparent frame with person segmentation
       async function createTransparentFrame(frameDataUrl) {
-        return new Promise(async (resolve, reject) => {
+        return new Promise((resolve, reject) => {
           try {
-            const img = new Image();
-            img.onload = async () => {
+            const image = new Image();
+            image.onload = async () => {
               const canvas = document.createElement('canvas');
-              canvas.width = img.width;
-              canvas.height = img.height;
-              const ctx = canvas.getContext('2d', { willReadFrequently: true });
+              canvas.width = image.width;
+              canvas.height = image.height;
+              const context = canvas.getContext('2d', { willReadFrequently: true });
               
               // Draw the original image
-              ctx.drawImage(img, 0, 0);
+              context.drawImage(image, 0, 0);
               
               // Run segmentation
               const segmentation = await bodyPixNet.segmentPerson(canvas, {
@@ -883,28 +924,26 @@
               
               // Create transparent background
               const cleanedMask = cleanMask(segmentation.data, canvas.width, canvas.height);
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
               const data = imageData.data;
+
               for (let i = 0; i < cleanedMask.length; i++) {
-                const j = i * 4;
-              for (let i = 0; i < cleanedMask.length; i++) {
-                  if (!cleanedMask[i]) {
-                  data[i * 4 + 3] = 0;
+                if (!cleanedMask[i]) {
+                  data[i * 4 + 3] = 0; // Set alpha to 0
                 }
-              }
               }
               
               // Update canvas with the transparent image
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              ctx.putImageData(imageData, 0, 0);
+              context.clearRect(0, 0, canvas.width, canvas.height);
+              context.putImageData(imageData, 0, 0);
               
               resolve(canvas.toDataURL('image/png'));
             };
             
-            img.onerror = () => reject(new Error('Failed to load frame'));
-            img.src = frameDataUrl;
-          } catch (err) {
-            reject(err);
+            image.onerror = () => reject(new Error('Failed to load frame'));
+            image.src = frameDataUrl;
+          } catch (error) {
+            reject(error);
           }
         });
       }
